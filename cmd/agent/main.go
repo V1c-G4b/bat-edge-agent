@@ -31,21 +31,21 @@ func routine(c *collector.SystemCollector, ctx context.Context) {
 			return
 
 		case <-ticker.C:
-			executeWithSecurity(c, ctx)
+			executeWithSecurity(c)
 		}
 	}
 }
 
-func executeWithSecurity(c *collector.SystemCollector, ctx context.Context) {
+func executeWithSecurity(c *collector.SystemCollector) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Println("recover from panic:", r)
 		}
 	}()
-	metricsColect(c, ctx)
+	metricsColect(c)
 }
 
-func metricsColect(c *collector.SystemCollector, ctx context.Context) {
+func metricsColect(c *collector.SystemCollector) {
 	metrics, err := c.Collect()
 	if err != nil {
 		log.Println(err)
@@ -74,7 +74,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok\n"))
+		_, err := w.Write([]byte("ok\n"))
+		if err != nil {
+			return
+		}
 	})
 
 	srv := &http.Server{Addr: ":8080", Handler: mux}
