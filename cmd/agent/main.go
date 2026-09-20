@@ -42,10 +42,10 @@ func executeWithSecurity(c *collector.SystemCollector) {
 			log.Println("recover from panic:", r)
 		}
 	}()
-	metricsColect(c)
+	metricsCollect(c)
 }
 
-func metricsColect(c *collector.SystemCollector) {
+func metricsCollect(c *collector.SystemCollector) {
 	metrics, err := c.Collect()
 	if err != nil {
 		log.Println(err)
