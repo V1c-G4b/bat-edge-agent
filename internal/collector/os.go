@@ -16,7 +16,7 @@ func NewSystemCollector() *SystemCollector {
 
 func (m SystemMetrics) String() string {
 	return fmt.Sprintf(
-		"CPU: %.2f%% | Memória: %.2f%% (%s / %s) | Coletado em: %s",
+		"CPU: %.2f%% | Memory: %.2f%% (%s / %s) | Collected at: %s",
 		m.CPUUsagePercentual,
 		m.MemUsagePercentual,
 		formatBytes(m.MemUsedBytes),

@@ -10,6 +10,7 @@ import (
 	"testing"
 )
 
+// helper para criar diretório temporário isolado por teste
 func createTempWAL(t *testing.T) (string, func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "wal_test_*")
@@ -24,6 +25,7 @@ func createTempWAL(t *testing.T) (string, func()) {
 	return walPath, cleanup
 }
 
+// 1. TESTE DO CAMINHO FELIZ: Grava N registros e recupera exatamente na ordem
 func TestWAL_WriteAndRecover(t *testing.T) {
 	walPath, cleanup := createTempWAL(t)
 	defer cleanup()
@@ -46,6 +48,7 @@ func TestWAL_WriteAndRecover(t *testing.T) {
 	}
 	_ = wal.Close()
 
+	// Recupera e valida integridade
 	records, err := RecoverWAL(walPath)
 	if err != nil {
 		t.Fatalf("RecoverWAL failed: %v", err)
@@ -65,6 +68,7 @@ func TestWAL_WriteAndRecover(t *testing.T) {
 	}
 }
 
+// 2. TESTE DE CONCORRÊNCIA: Múltiplas goroutines escrevendo em paralelo
 func TestWAL_ConcurrentWrites(t *testing.T) {
 	walPath, cleanup := createTempWAL(t)
 	defer cleanup()
@@ -106,6 +110,7 @@ func TestWAL_ConcurrentWrites(t *testing.T) {
 	}
 }
 
+// 3. TESTE DE FALHA: Simula arquivo corrompido ou truncado por corte de energia
 func TestWAL_CorruptedRecord(t *testing.T) {
 	walPath, cleanup := createTempWAL(t)
 	defer cleanup()
@@ -119,13 +124,16 @@ func TestWAL_CorruptedRecord(t *testing.T) {
 	_ = wal.Write([]byte("dado_integro_2"))
 	_ = wal.Close()
 
+	// Injetamos bytes lixo no final (simulando que a energia caiu enquanto o disco gravava)
 	f, err := os.OpenFile(walPath, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		t.Fatalf("failed to open file for tampering: %v", err)
 	}
+	// Escreve apenas 5 bytes soltos (menos que os 16 bytes do HeaderSize)
 	_, _ = f.Write([]byte{0xDE, 0xAD, 0xBE, 0xEF, 0x01})
 	_ = f.Close()
 
+	// Recuperação deve resgatar os dois íntegros e acusar o truncamento do terceiro
 	records, err := RecoverWAL(walPath)
 	if !errors.Is(err, ErrTruncatedRecord) {
 		t.Fatalf("expected ErrTruncatedRecord, got %v", err)

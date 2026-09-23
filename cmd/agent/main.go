@@ -2,7 +2,9 @@ package main
 
 import (
 	"bat-edge-agent/internal/collector"
+	"bat-edge-agent/internal/storage"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -14,11 +16,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/shirou/gopsutil/v4/host"
 )
 
-func routine(c *collector.SystemCollector, ctx context.Context) {
+func routine(c *collector.SystemCollector, ctx context.Context, esteira chan<- []byte) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -31,45 +31,73 @@ func routine(c *collector.SystemCollector, ctx context.Context) {
 			return
 
 		case <-ticker.C:
-			executeWithSecurity(c)
+			metrics := executeWithSecurity(c)
+
+			esteira <- metrics
 		}
 	}
 }
 
-func executeWithSecurity(c *collector.SystemCollector) {
+func executeWithSecurity(c *collector.SystemCollector) []byte {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Println("recover from panic:", r)
 		}
 	}()
-	metricsCollect(c)
+	return metricsCollect(c)
 }
 
-func metricsCollect(c *collector.SystemCollector) {
+func metricsCollect(c *collector.SystemCollector) []byte {
 	metrics, err := c.Collect()
 	if err != nil {
 		log.Println(err)
 	}
-	version, _ := host.KernelVersion()
-	fmt.Println(version)
+	marshal, err := json.Marshal(metrics)
+	if err != nil {
+		return nil
+	}
+	return marshal
+}
 
-	platform, family, version, _ := host.PlatformInformation()
-	fmt.Println("platform:", platform)
-	fmt.Println("family:", family)
-	fmt.Println("version:", version)
+func walConsumer(wal *storage.WAL, esteira <-chan []byte) {
+	log.Println("start wal consumer")
 
-	fmt.Println(metrics)
+	for data := range esteira {
+		log.Printf("WAL writing metric (%d bytes): %s\n", len(data), string(data))
+		if err := wal.Write(data); err != nil {
+			log.Printf("failed to write to WAL: %v\n", err)
+		}
+	}
+
+	log.Println("stop wal consumer: pipeline fully drained")
 }
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	c := collector.NewSystemCollector()
 
-	defer stop()
+	wal, err := storage.OpenWAL("telemetry.wal")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer func() {
+		if err := wal.Close(); err != nil {
+			log.Printf("Error: %v", err)
+		}
+	}()
+
+	esteira := make(chan []byte, 10)
 
 	var wg sync.WaitGroup
+
 	wg.Go(func() {
-		routine(c, ctx)
+		routine(c, ctx, esteira)
+	})
+
+	wg.Go(func() {
+		walConsumer(wal, esteira)
 	})
 
 	mux := http.NewServeMux()
@@ -92,11 +120,9 @@ func main() {
 	})
 
 	<-ctx.Done()
-	stop()
-	log.Println("stop http server")
+	log.Println("starting shutdown server")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("http server stopped with error: %v", err)
